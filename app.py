@@ -38,6 +38,13 @@ try:
 except ImportError:
     SEABORN_AVAILABLE = False
 
+# Lecture PDF (optionnel)
+try:
+    from pypdf import PdfReader
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
+
 # =====================================================
 # CONFIGURATION UNIQUE
 # =====================================================
@@ -239,6 +246,7 @@ def init_files():
                 "scipy": SCIPY_AVAILABLE,
                 "matplotlib": MATPLOTLIB_AVAILABLE,
                 "seaborn": SEABORN_AVAILABLE,
+                "pdf": PDF_AVAILABLE,
                 "auto_learning_L": True
             }
         }
@@ -895,11 +903,11 @@ class SpectralAnalysis:
         return fig
 
 # =====================================================
-# LECTURE DE FICHIERS
+# LECTURE DE FICHIERS (avec support PDF)
 # =====================================================
 
 def read_any_file(uploaded_file):
-    """Lit un fichier uploadé"""
+    """Lit un fichier uploadé (TXT, CSV, JSON, PDF) et retourne le texte"""
     filename = uploaded_file.name.lower()
     try:
         if filename.endswith('.txt'):
@@ -909,11 +917,20 @@ def read_any_file(uploaded_file):
             return ' '.join(df.astype(str).values.flatten())
         elif filename.endswith('.json'):
             data = json.load(uploaded_file)
-            return json.dumps(data)
+            return json.dumps(data, ensure_ascii=False)
+        elif filename.endswith('.pdf'):
+            if not PDF_AVAILABLE:
+                st.error("La bibliothèque `pypdf` n'est pas installée. Impossible de lire les PDF.")
+                return ""
+            reader = PdfReader(uploaded_file)
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() + " "
+            return text
         else:
             return uploaded_file.read().decode('utf-8', errors='ignore')
     except Exception as e:
-        st.error(f"Erreur: {e}")
+        st.error(f"Erreur de lecture: {e}")
         return ""
 
 # =====================================================
@@ -961,6 +978,10 @@ def main():
     init_directories()
     init_files()
     ShadowState.initialize()
+    
+    # Initialisation de l'historique du chat
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
     
     st.markdown("""
         <style>
@@ -1015,6 +1036,7 @@ def main():
         st.header("🎯 Système")
         st.write(f"**Scipy**: {'✅' if SCIPY_AVAILABLE else '❌'}")
         st.write(f"**Matplotlib**: {'✅' if MATPLOTLIB_AVAILABLE else '❌'}")
+        st.write(f"**PDF**: {'✅' if PDF_AVAILABLE else '❌'}")
         st.write(f"**Auto-Learning**: ✅")
     
     st.header("📊 Tableau de Bord")
@@ -1047,19 +1069,21 @@ def main():
     
     st.divider()
     
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    # 7 onglets dont le nouveau chat
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "📚 Apprentissage",
         "💬 Génération",
         "🔬 Spectral",
         "📈 λ Evolution",
         "🎯 Auto-Stab",
-        "⚡ Export"
+        "⚡ Export",
+        "💬 Chat"
     ])
     
     with tab1:
         st.header("📚 Apprentissage")
         
-        uploaded = st.file_uploader("Fichier", type=["txt", "csv", "json"])
+        uploaded = st.file_uploader("Fichier", type=["txt", "csv", "json", "pdf"])
         
         if uploaded:
             text = read_any_file(uploaded)
@@ -1116,16 +1140,8 @@ def main():
             st.error("❌ Scipy/matplotlib requis")
         else:
             fragments = st.session_state.shadow_fragments
-            
-            # --- CORRECTION : vérification robuste du DataFrame ---
-            if not fragments.empty and 'count' in fragments.columns:
-                # Conversion sécurisée de la colonne 'count'
-                fragments['count'] = pd.to_numeric(fragments['count'], errors='coerce').fillna(0)
+            if not fragments.empty:
                 word_list = fragments.nlargest(100, 'count')['fragment'].tolist()
-            else:
-                word_list = []
-            
-            if word_list:
                 selected = st.selectbox("Mot", word_list)
                 nperseg = st.slider("Fenêtre", 32, 512, 128, 32)
                 
@@ -1146,8 +1162,6 @@ def main():
                         
                         st.pyplot(fig1)
                         st.pyplot(fig2)
-            else:
-                st.info("Aucun fragment disponible. Commencez par nourrir l'IA.")
     
     with tab4:
         st.header("📈 λ Evolution")
@@ -1250,6 +1264,46 @@ def main():
                 if DataExporter.import_all(json_data):
                     st.success("✅ OK")
                     st.rerun()
+
+    # ===================== NOUVEL ONGLET CHAT =====================
+    with tab7:
+        st.header("💬 Chat avec ORACLE V18")
+        
+        # Afficher l'historique
+        for msg in st.session_state.chat_history:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+        
+        # Zone de saisie
+        if prompt := st.chat_input("Posez votre question..."):
+            # Ajouter le message utilisateur
+            st.session_state.chat_history.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            
+            # Générer la réponse
+            with st.chat_message("assistant"):
+                with st.spinner("Réflexion en cours..."):
+                    tokens = LinguisticProcessor.tokenize(prompt)
+                    if tokens:
+                        # On prend le dernier mot comme seed
+                        seed = tokens[-1]
+                        response = GenerationEngine.think(
+                            seed=seed,
+                            steps=gen_steps,
+                            temperature=temp,
+                            method=gen_method,
+                            use_L=True
+                        )
+                    else:
+                        response = "Je n'ai pas compris le mot clé."
+                st.markdown(response)
+                st.session_state.chat_history.append({"role": "assistant", "content": response})
+        
+        # Bouton pour effacer
+        if st.button("🗑️ Effacer la conversation"):
+            st.session_state.chat_history = []
+            st.rerun()
 
 if __name__ == "__main__":
     main()
