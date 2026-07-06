@@ -1116,8 +1116,16 @@ def main():
             st.error("❌ Scipy/matplotlib requis")
         else:
             fragments = st.session_state.shadow_fragments
-            if not fragments.empty:
+            
+            # --- CORRECTION : vérification robuste du DataFrame ---
+            if not fragments.empty and 'count' in fragments.columns:
+                # Conversion sécurisée de la colonne 'count'
+                fragments['count'] = pd.to_numeric(fragments['count'], errors='coerce').fillna(0)
                 word_list = fragments.nlargest(100, 'count')['fragment'].tolist()
+            else:
+                word_list = []
+            
+            if word_list:
                 selected = st.selectbox("Mot", word_list)
                 nperseg = st.slider("Fenêtre", 32, 512, 128, 32)
                 
@@ -1138,6 +1146,8 @@ def main():
                         
                         st.pyplot(fig1)
                         st.pyplot(fig2)
+            else:
+                st.info("Aucun fragment disponible. Commencez par nourrir l'IA.")
     
     with tab4:
         st.header("📈 λ Evolution")
